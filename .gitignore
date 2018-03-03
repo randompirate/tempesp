@@ -1,1 +1,4 @@
 /client_sensor/security.pass
+/server_logger/private_ip.py
+
+__pycache__/
