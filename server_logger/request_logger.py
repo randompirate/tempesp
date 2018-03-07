@@ -18,8 +18,6 @@ SERVER_PORT   = private_ip.port # IOT listening port (int)
 KNOWN_DEVICES = ['laptop_test', 'ESP_018D15']
 
 
-exit()
-
 
 def write_iot_log(path, query_dict):
   # utc_to_ams = lambda utc_dt : utc_dt.replace(tzinfo=pytz.utc).astimezone(pytz.timezone("Europe/Amsterdam"))
