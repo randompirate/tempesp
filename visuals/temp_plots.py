@@ -37,6 +37,7 @@ def import_log():
     csvh = csv.reader(fh, delimiter = ';')
     next(csvh) #Skip head row
     for line in csvh:
+      # print(line)
       payload = json.loads(line[1])
       #TODO: Filter out appropriate lines from payload
       temp, humid = float(payload['temperature']), float(payload['humidity'])
@@ -53,8 +54,14 @@ def export_csv(time_array, temp_array, humi_array, delta_temp):
     for tim, tem, hum, dte in zip(time_array, temp_array, humi_array, delta_temp):
       f.write('{};{};{};{}\n'.format(tim, tem, hum, dte))
 
-def smoothen(np_arr, k=5):
-  return np.convolve(np_arr, np.ones(k)/k, 'valid')
+def moving_avg(x_array,y_array, window = timedelta(hours = 12)):
+  y_avg_array = []
+  for x,y in zip(x_array, y_array):
+    y_windowed = y_array[ ((x-window) < x_array) * (x_array < (x+window)) ]
+    y_avg = np.mean(y_windowed)
+    y_avg_array.append(y_avg)
+  return np.array(y_avg_array)
+
 
 def math_ops(time_array_epoch, temp_array, humi_array):
   ret_dict = {}
@@ -62,18 +69,15 @@ def math_ops(time_array_epoch, temp_array, humi_array):
   ret_dict['derivative_temp'] = 3600*np.gradient(temp_array, time_array_epoch) #degs/hour
   # Fourier (Only on the last p=2^k samples)
   k = int(np.log(len(time_array_epoch))/np.log(2))
-  t_hat = nfft.nfft(temp_array[-2**k:], time_array_epoch[-2**k:])
+  t_window = time_array_epoch[-2**k:]-time_array_epoch[-2**k]
+  t_hat = nfft.nfft(temp_array[-2**k:], t_window)
   #freqHz = (0:1:length(X_mag)-1)*Fs/N; Fs=sampling rate, N = sample size
-  freq = np.arange(2**k)*(time_array_epoch[-1] - time_array_epoch[-2**k])/(60*60*24)
-  mag = np.log(np.abs(t_hat))/np.log(10)
-  ret_dict['fourier'] = freq[mag<1e11], mag[mag<1e11]
+  # freq = np.arange(2**k)*(time_array_epoch[-1] - time_array_epoch[-2**k])/(60*60*24)
+  ret_dict['fourier'] = t_hat.real
   return ret_dict
 
 
-#
-# Main
-#
-
+# Set variables
 time_array, temp_array, humi_array = import_log()
 
 time_array_epoch = np.array([(s-utc_to_local(datetime(1970,1,1))).total_seconds() for s in time_array]) # time array in seconds
@@ -83,30 +87,56 @@ math_series = math_ops(time_array_epoch, temp_array, humi_array)
 delta_temp = math_series['derivative_temp']
 freq = math_series['fourier']
 
-# export_csv(time_array, temp_array, humi_array, delta_temp)
-
 
 #
 # Bokeh Plots
 #
 
-from bokeh.io import output_file, show
-from bokeh.plotting import figure
-import bokeh
+if __name__ == '__main__':
 
-output_file('./plots.html')
+# TODO: Split into seperate file
 
-#Hover tool
-hover = bokeh.models.HoverTool(tooltips=[
-    ("temp", "$y"),
-    ("time", "$x"),
-])
+  import bokeh.io
+  import bokeh.plotting
+  import bokeh.models
+  import bokeh
 
-# create a new plot (with a title) using figure
-p = figure(plot_width=1400, plot_height=400, title="Temperature", tools = [hover, 'box_zoom', 'reset'])
+  bokeh.io.output_file('./plots.html')
 
-# Temp plot
-tp = p.line(time_array, temp_array, line_width=1)
-p.line(time_array[36:-36], smoothen(temp_array, 73), line_width=2, line_color='red')
+  data_model =  bokeh.models.ColumnDataSource(data={
+      'date' : time_array,
+      'date_string' : [s.strftime('%d-%m %H:%M') for s in time_array],
+      'temp' : temp_array,
+      'temp_avg': moving_avg(time_array, temp_array, timedelta(hours=12)),
+  })
 
-show(p) # show the results
+  # Temp plot
+  p = bokeh.plotting.figure(plot_width=1400, plot_height=400,
+            title="Temperature",
+            tools = ['box_zoom', 'reset'],
+            x_axis_type = 'datetime',
+            toolbar_location = 'above')
+
+  # Temp plot
+  p.line(x='date', y='temp',
+            line_width=1, legend = 'T',
+            source = data_model)
+  p.line(x='date', y='temp_avg',
+            line_width=2, legend = 'T (24hr avg)',
+            source = data_model)
+
+  # Hide on legend click
+  p.legend.click_policy="hide"
+
+  p.add_tools(bokeh.models.HoverTool(
+    tooltips=[
+      ("time", "@date_string"),
+      ("temp", "@temp{0.0}"),
+      ("avg temp", "@temp_avg{0.0}"),
+    ]
+  ))
+
+  bokeh.io.show(p) # show the results
+
+  # plt.plot(np.gradient(time_array_epoch))
+  # plt.show()
