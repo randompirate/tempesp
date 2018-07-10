@@ -8,32 +8,25 @@ import matplotlib.cbook as cbook
 import csv
 import json
 import nfft
+from scipy.interpolate import interp1d
 
-
-logfile = r"P:\Dropbox\rpi_connector\server_requests.log"
+temp_logfile = r"P:\Dropbox\rpi_connector\server_requests.log"
+weather_logfile = r"P:\Dropbox\rpi_connector\weather.log"
 csv_out = r"P:\Dropbox\RaspberryPi\temp_humid.csv"
 
 
 min_date = datetime.strptime('2017-11-20 0:0:0', '%Y-%m-%d %H:%M:%S')
 
-
-
 utc_to_local = lambda utc_dt: utc_dt.replace(tzinfo=timezone.utc).astimezone(tz=None) # Fix the time zone
 parse_datetime = lambda s : utc_to_local(datetime.strptime(s.split('.')[0], '%Y-%m-%d %H:%M:%S'))
+kelvin2c = lambda k : float(k) - 273.15
+
 
 cur_date = utc_to_local(datetime.now())
 
-def filter_regularise(array_in, window = 4):
-  array_out = array_in[:]
-  for i,val in enumerate(array_in):
-    if i<window:
-      continue
-    array_out[i] = np.median(array_in[i-window:i+window])
-  return array_out
-
-def import_log():
+def import_temp_log():
   time_array, temp_array, humi_array = [], [], []
-  with open(logfile, 'r') as fh:
+  with open(temp_logfile, 'r') as fh:
     csvh = csv.reader(fh, delimiter = ';')
     next(csvh) #Skip head row
     for line in csvh:
@@ -46,6 +39,25 @@ def import_log():
         temp_array.append(temp)
         humi_array.append(humid)
   return np.array(time_array), np.array(temp_array), np.array(humi_array)
+
+def import_weather_log():
+  time_array, temp_array = [], []
+  with open(weather_logfile, 'r') as fh:
+    csvh = csv.reader(fh, delimiter = ';')
+    next(csvh) #Skip head row
+    for line in csvh:
+      if not line[1] or 'error' in line[1] : continue
+      payload = json.loads(line[1])
+
+      time_array.append(parse_datetime(line[0]))
+      temp_array.append(kelvin2c(payload['main']['temp']))
+
+  return np.array(time_array), np.array(temp_array)
+
+
+def uniform_resampling(t_seconds, y, t0, sample_period):
+  splerp = interp1d(t_seconds, y, kind = 'cubic')
+  return splerp(np.arange(t_seconds[0], t_seconds[-1], sample_period))
 
 def export_csv(time_array, temp_array, humi_array, delta_temp):
 
@@ -78,7 +90,8 @@ def math_ops(time_array_epoch, temp_array, humi_array):
 
 
 # Set variables
-time_array, temp_array, humi_array = import_log()
+time_array, temp_array, humi_array = import_temp_log()
+weather_time_array, weather_temp_array = import_weather_log()
 
 time_array_epoch = np.array([(s-utc_to_local(datetime(1970,1,1))).total_seconds() for s in time_array]) # time array in seconds
 time_array_clock = np.array([t.replace(day=1, month = 1) for t in time_array])
@@ -92,22 +105,34 @@ freq = math_series['fourier']
 # Bokeh Plots
 #
 
-if __name__ == '__main__':
+# import matplotlib.pyplot as plt
 
-# TODO: Split into seperate file
+# plt.plot(weather_time_array)
+# plt.show()
+
+# exit()
+
+if __name__ == '__main__':
 
   import bokeh.io
   import bokeh.plotting
   import bokeh.models
   import bokeh
 
+
   bokeh.io.output_file('./plots.html')
 
   data_model =  bokeh.models.ColumnDataSource(data={
       'date' : time_array,
-      'date_string' : [s.strftime('%d-%m %H:%M') for s in time_array],
+      'date_string' : [s.strftime('%a %d-%m %H:%M') for s in time_array],
       'temp' : temp_array,
       'temp_avg': moving_avg(time_array, temp_array, timedelta(hours=12)),
+  })
+
+  weather_data_model = bokeh.models.ColumnDataSource(data={
+      'weather_date' : weather_time_array,
+      'weather_temp' : weather_temp_array,
+      # 'temp_avg': moving_avg(time_array, temp_array, timedelta(hours=12)),
   })
 
   # Temp plot
@@ -119,11 +144,14 @@ if __name__ == '__main__':
 
   # Temp plot
   p.line(x='date', y='temp',
-            line_width=1, legend = 'T',
+            line_width=1,# legend = 'T',
             source = data_model)
   p.line(x='date', y='temp_avg',
-            line_width=2, legend = 'T (24hr avg)',
+            line_width=2,# legend = 'T (24hr avg)',
             source = data_model)
+  p.line(x='weather_date', y='weather_temp',
+            line_width=1,# legend = 'T outside',
+            source = weather_data_model, color = 'firebrick')
 
   # Hide on legend click
   p.legend.click_policy="hide"
@@ -133,6 +161,7 @@ if __name__ == '__main__':
       ("time", "@date_string"),
       ("temp", "@temp{0.0}"),
       ("avg temp", "@temp_avg{0.0}"),
+      # ("out temp", "@weather_temp{0.0}"),
     ]
   ))
 

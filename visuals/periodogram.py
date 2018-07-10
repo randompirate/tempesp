@@ -23,7 +23,7 @@ print(t[-1])
 
 fig = plt.figure()
 ax = fig.add_subplot(111)
-ax.semilogx(1/f_daily, ls/np.max(ls))
+ax.plot(1/f_daily, ls/np.max(ls))
 ax.set_xlabel('Period (days)')
 plt.show()
 # plt.plot(freqs, ps/np.max(ps))\n
